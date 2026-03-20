@@ -1,0 +1,36 @@
+# Python
+.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage*
+**/.tox/
+*.log
+*.sqlite
+*.db
+
+# FastAPI / app temp
+*.tmp
+
+# Node / Next.js
+smart-meter-core-frontend/node_modules/
+smart-meter-core-frontend/.next/
+smart-meter-core-frontend/out/
+smart-meter-core-frontend/build/
+smart-meter-core-frontend/coverage/
+
+# Environment
+.env
+.env.*
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+
+smart-meter-core-backend/forcasting model/data - Copy.csv
