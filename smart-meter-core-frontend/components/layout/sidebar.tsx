@@ -88,7 +88,7 @@ export function Sidebar() {
         <Button
           variant="ghost"
           className="w-full justify-start text-destructive hover:text-destructive hover:bg-destructive/10"
-          onClick={logout}
+          onClick={() => logout()}
         >
           <LogOut className="mr-2 h-5 w-5" />
           Logout

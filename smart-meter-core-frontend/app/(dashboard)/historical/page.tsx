@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Calendar, TrendingUp, TrendingDown, Download } from "lucide-react"
+import { useAuthStore } from "@/lib/store/use-auth-store"
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -22,52 +23,45 @@ import {
 
 type TimeRange = "day" | "week" | "month" | "year"
 
-// <CHANGE> Generate mock historical data for different time ranges
-const generateHistoricalData = (range: TimeRange) => {
-  const counts = { day: 24, week: 168, month: 30, year: 12 }
-  const count = counts[range]
-  const labels = {
-    day: (i: number) => `${i}:00`,
-    week: (i: number) => {
-      const day = Math.floor(i / 24)
-      const hour = i % 24
-      return day === 0 && hour === 0 ? "Mon" : day === 1 && hour === 0 ? "Tue" : ""
-    },
-    month: (i: number) => `Day ${i + 1}`,
-    year: (i: number) => {
-      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-      return months[i]
-    },
-  }
-
-  return Array.from({ length: count }, (_, i) => {
-    const baseUsage = range === "year" ? 400 : range === "month" ? 15 : 3
-    const variation = range === "year" ? 150 : range === "month" ? 5 : 2
-
-    return {
-      label: labels[range](i),
-      usage: Math.random() * variation + baseUsage - variation / 2,
-      cost: (Math.random() * variation + baseUsage - variation / 2) * 0.12,
-      temperature: Math.random() * 10 + 20,
-      peakDemand: Math.random() * (variation * 1.5) + baseUsage,
-    }
-  })
+type HistoryPoint = {
+  label: string
+  usage: number
+  cost: number
+  temperature: number
+  peakDemand: number
 }
 
 export default function HistoricalPage() {
+  const { user, token } = useAuthStore()
   const [timeRange, setTimeRange] = useState<TimeRange>("day")
-  const [data, setData] = useState(generateHistoricalData("day"))
+  const [data, setData] = useState<HistoryPoint[]>([])
 
   useEffect(() => {
-    setData(generateHistoricalData(timeRange))
-  }, [timeRange])
+    const meterId = user?.meterId
+    if (!meterId) return
+
+    const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
+    const url = `${apiBaseUrl}/api/consumer/history?meterId=${encodeURIComponent(meterId)}&range=${timeRange}`
+    setData([])
+
+    fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error(`history fetch failed: ${r.status}`)
+        return r.json()
+      })
+      .then((json) => setData(json.data as HistoryPoint[]))
+      .catch(() => setData([]))
+  }, [timeRange, user?.meterId, token])
 
   // <CHANGE> Calculate summary statistics
+
   const totalUsage = data.reduce((sum, d) => sum + d.usage, 0)
   const totalCost = data.reduce((sum, d) => sum + d.cost, 0)
-  const avgUsage = totalUsage / data.length
-  const maxUsage = Math.max(...data.map((d) => d.usage))
-  const avgCostPerUnit = totalCost / totalUsage
+  const avgUsage = data.length ? totalUsage / data.length : 0
+  const maxUsage = data.length ? Math.max(...data.map((d) => d.usage)) : 0
+  const avgCostPerUnit = totalUsage ? totalCost / totalUsage : 0
 
   return (
     <DashboardLayout>

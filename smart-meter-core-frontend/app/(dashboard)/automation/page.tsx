@@ -6,15 +6,27 @@ import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Zap, Power, Clock, Plus, Settings2 } from "lucide-react"
+import { useEffect, useState } from "react"
+import { useAuthStore } from "@/lib/store/use-auth-store"
 
-const appliances = [
-  { name: "Main HVAC", room: "Living Room", status: true, load: "1.2 kW", priority: "High" },
-  { name: "Water Heater", room: "Utility Room", status: false, load: "2.4 kW", priority: "Medium" },
-  { name: "EV Charger", room: "Garage", status: true, load: "3.6 kW", priority: "Low" },
-  { name: "Dishwasher", room: "Kitchen", status: false, load: "0.8 kW", priority: "Low" },
-]
+type DeviceCard = { id: string; name: string; room: string; status: boolean; load: string; priority: string }
 
 export default function AutomationPage() {
+  const { user, token } = useAuthStore()
+  const meterId = user?.meterId
+  const [devices, setDevices] = useState<DeviceCard[]>([])
+
+  useEffect(() => {
+    if (!meterId) return
+    const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
+    fetch(`${apiBaseUrl}/api/consumer/devices?meterId=${encodeURIComponent(meterId)}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+      .then((r) => r.json())
+      .then((json) => setDevices((json.devices as DeviceCard[]) ?? []))
+      .catch(() => setDevices([]))
+  }, [meterId, token])
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -36,7 +48,7 @@ export default function AutomationPage() {
               <CardDescription>Direct control and real-time load per device.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {appliances.map((app) => (
+              {devices.map((app) => (
                 <div
                   key={app.name}
                   className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors"

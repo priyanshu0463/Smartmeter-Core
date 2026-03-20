@@ -4,12 +4,24 @@ import { DashboardLayout } from "@/components/layout/dashboard-layout"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useRealtimeEnergy } from "@/hooks/use-realtime-energy"
 import { useEnergyStore } from "@/lib/store/use-energy-store"
+import { useAuthStore } from "@/lib/store/use-auth-store"
+import { useEffect } from "react"
 import { Zap, Activity, Battery, CreditCard, TrendingUp, AlertCircle } from "lucide-react"
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts"
 
 export default function ConsumerDashboard() {
-  const { liveData, totalUsageToday, estimatedBill } = useEnergyStore()
+  const { liveData, totalUsageToday, estimatedBill, fetchDashboard } = useEnergyStore()
+  const { user } = useAuthStore()
+  const meterId = user?.meterId
+
   useRealtimeEnergy()
+
+  useEffect(() => {
+    if (!meterId) return
+    fetchDashboard(meterId).catch(() => {
+      // MVP: keep UI usable even if the backend is temporarily unavailable.
+    })
+  }, [meterId, fetchDashboard])
 
   const stats = [
     {

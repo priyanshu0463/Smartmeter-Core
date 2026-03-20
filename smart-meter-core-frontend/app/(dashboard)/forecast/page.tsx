@@ -8,54 +8,97 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Progress } from "@/components/ui/progress"
 import { TrendingDown, TrendingUp, Info, Zap, DollarSign, AlertCircle, Download, Sun, Cloud } from "lucide-react"
 import { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Bar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from "recharts"
+import { useEffect, useMemo, useState } from "react"
+import { useAuthStore } from "@/lib/store/use-auth-store"
 
-// <CHANGE> Enhanced forecast data with more metrics
-const forecastData = Array.from({ length: 24 }, (_, i) => {
-  const hour = i
-  const baseLoad = 2 + Math.sin((hour - 6) / 12 * Math.PI) * 1.5
-  const solarGen = hour >= 6 && hour <= 18 ? Math.sin((hour - 6) / 12 * Math.PI) * 2 : 0
-  
-  return {
-    time: `${i}:00`,
-    hour: i,
-    predicted: baseLoad + Math.random() * 0.5,
-    confidenceUpper: baseLoad + 0.8 + Math.random() * 0.3,
-    confidenceLower: Math.max(0, baseLoad - 0.6 + Math.random() * 0.2),
-    renewable: solarGen + Math.random() * 0.3,
-    gridPrice: 0.12 + (hour >= 17 && hour <= 21 ? 0.08 : 0) + Math.random() * 0.02,
-    netLoad: Math.max(0, baseLoad - solarGen),
-  }
-})
+type ForecastPoint = {
+  time: string
+  hour: number
+  predicted: number
+  confidenceUpper: number
+  confidenceLower: number
+  renewable: number
+  gridPrice: number
+  netLoad: number
+}
 
-// <CHANGE> Weekly forecast pattern data
-const weeklyPattern = [
-  { day: "Mon", usage: 45, cost: 5.4, renewable: 12 },
-  { day: "Tue", usage: 42, cost: 5.0, renewable: 15 },
-  { day: "Wed", usage: 48, cost: 5.8, renewable: 14 },
-  { day: "Thu", usage: 44, cost: 5.3, renewable: 16 },
-  { day: "Fri", usage: 50, cost: 6.2, renewable: 13 },
-  { day: "Sat", usage: 38, cost: 4.6, renewable: 18 },
-  { day: "Sun", usage: 36, cost: 4.3, renewable: 20 },
-]
-
-// <CHANGE> Load profile comparison data for radar chart
-const loadProfile = [
-  { category: "Morning", current: 3.2, predicted: 3.5, optimal: 2.8 },
-  { category: "Midday", current: 2.1, predicted: 2.3, optimal: 3.5 },
-  { category: "Afternoon", current: 2.8, predicted: 3.0, optimal: 3.8 },
-  { category: "Evening", current: 4.5, predicted: 4.8, optimal: 2.5 },
-  { category: "Night", current: 1.8, predicted: 1.9, optimal: 1.5 },
-]
+type WeeklyPoint = { day: string; usage: number; cost: number; renewable: number }
+type LoadProfilePoint = { category: string; current: number; predicted: number; optimal: number }
 
 export default function ForecastPage() {
+  const { user, token } = useAuthStore()
+  const meterId = user?.meterId
+
+  const [forecastData, setForecastData] = useState<ForecastPoint[]>([])
+  const [weeklyPattern, setWeeklyPattern] = useState<WeeklyPoint[]>([])
+
+  useEffect(() => {
+    if (!meterId) return
+
+    const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
+    const fetchHourly = fetch(
+      `${apiBaseUrl}/api/consumer/forecast/hourly?meterId=${encodeURIComponent(meterId)}`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+    ).then((r) => {
+      if (!r.ok) throw new Error(`hourly forecast failed: ${r.status}`)
+      return r.json()
+    })
+
+    const fetchWeekly = fetch(
+      `${apiBaseUrl}/api/consumer/forecast/weekly?meterId=${encodeURIComponent(meterId)}`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+    ).then((r) => {
+      if (!r.ok) throw new Error(`weekly forecast failed: ${r.status}`)
+      return r.json()
+    })
+
+    Promise.all([fetchHourly, fetchWeekly])
+      .then(([hourlyJson, weeklyJson]) => {
+        setForecastData(hourlyJson.forecast as ForecastPoint[])
+        setWeeklyPattern(weeklyJson.weeklyPattern as WeeklyPoint[])
+      })
+      .catch(() => {
+        setForecastData([])
+        setWeeklyPattern([])
+      })
+  }, [meterId, token])
+
+  const loadProfile: LoadProfilePoint[] = useMemo(() => {
+    if (!forecastData.length) return []
+
+    const avg = (pred: (p: ForecastPoint) => boolean) => {
+      const items = forecastData.filter(pred)
+      if (!items.length) return 0
+      return items.reduce((s, x) => s + x.predicted, 0) / items.length
+    }
+
+    // `forecastData.hour` is 0..23 in our MVP (i = hour index).
+    const morning = avg((p) => p.hour >= 6 && p.hour <= 9)
+    const midday = avg((p) => p.hour >= 10 && p.hour <= 13)
+    const afternoon = avg((p) => p.hour >= 14 && p.hour <= 17)
+    const evening = avg((p) => p.hour >= 18 && p.hour <= 20)
+    const night = avg((p) => p.hour >= 21 || p.hour <= 5)
+
+    const currentFromPred = (x: number) => x * 1.04
+    const optimalFromPred = (x: number) => Math.max(0, x * 0.92)
+
+    return [
+      { category: "Morning", current: currentFromPred(morning), predicted: morning, optimal: optimalFromPred(morning) },
+      { category: "Midday", current: currentFromPred(midday), predicted: midday, optimal: optimalFromPred(midday) },
+      { category: "Afternoon", current: currentFromPred(afternoon), predicted: afternoon, optimal: optimalFromPred(afternoon) },
+      { category: "Evening", current: currentFromPred(evening), predicted: evening, optimal: optimalFromPred(evening) },
+      { category: "Night", current: currentFromPred(night), predicted: night, optimal: optimalFromPred(night) },
+    ]
+  }, [forecastData])
+
   // <CHANGE> Calculate detailed metrics
-  const peakLoad = Math.max(...forecastData.map(d => d.predicted))
-  const peakTime = forecastData.find(d => d.predicted === peakLoad)?.time || "18:00"
+  const peakLoad = forecastData.length ? Math.max(...forecastData.map((d) => d.predicted)) : 0
+  const peakTime = forecastData.find((d) => d.predicted === peakLoad)?.time || "18:00"
   const totalRenewable = forecastData.reduce((sum, d) => sum + d.renewable, 0)
   const totalPredicted = forecastData.reduce((sum, d) => sum + d.predicted, 0)
-  const renewablePercent = (totalRenewable / totalPredicted) * 100
-  const estimatedDailyCost = forecastData.reduce((sum, d) => sum + (d.predicted * d.gridPrice), 0)
-  const savingsOpportunity = forecastData.filter(d => d.gridPrice > 0.15).reduce((sum, d) => sum + (d.predicted * 0.05), 0)
+  const renewablePercent = totalPredicted > 0 ? (totalRenewable / totalPredicted) * 100 : 0
+  const estimatedDailyCost = forecastData.reduce((sum, d) => sum + d.predicted * d.gridPrice, 0)
+  const savingsOpportunity = forecastData.filter((d) => d.gridPrice > 0.15).reduce((sum, d) => sum + d.predicted * 0.05, 0)
 
   return (
     <DashboardLayout>

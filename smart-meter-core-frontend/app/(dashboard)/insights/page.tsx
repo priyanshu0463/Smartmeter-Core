@@ -28,35 +28,52 @@ import {
   BarChart,
   Bar,
 } from "recharts"
+import { useEffect, useState } from "react"
+import { useAuthStore } from "@/lib/store/use-auth-store"
 
-const efficiencyTrend = Array.from({ length: 12 }, (_, i) => ({
-  month: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][i],
-  efficiency: 75 + Math.random() * 15 - 5,
-  benchmark: 85,
-}))
-
-const applianceInsights = [
-  { appliance: "HVAC", usage: 45, efficiency: 68, cost: 54.0, potential: 12 },
-  { appliance: "Water Heater", usage: 18, efficiency: 82, cost: 21.6, potential: 4 },
-  { appliance: "Refrigerator", usage: 12, efficiency: 90, cost: 14.4, potential: 1 },
-  { appliance: "Washer/Dryer", usage: 10, efficiency: 75, cost: 12.0, potential: 3 },
-  { appliance: "Lighting", usage: 8, efficiency: 85, cost: 9.6, potential: 2 },
-  { appliance: "Other", usage: 7, efficiency: 70, cost: 8.4, potential: 1.5 },
-]
-
-const weatherCorrelation = [
-  { day: "Mon", temp: 28, usage: 42 },
-  { day: "Tue", temp: 31, usage: 48 },
-  { day: "Wed", temp: 33, usage: 54 },
-  { day: "Thu", temp: 29, usage: 45 },
-  { day: "Fri", temp: 27, usage: 40 },
-  { day: "Sat", temp: 26, usage: 38 },
-  { day: "Sun", temp: 30, usage: 46 },
-]
+type EfficiencyPoint = { month: string; efficiency: number; benchmark: number }
+type ApplianceInsight = { appliance: string; usage: number; efficiency: number; cost: number; potential: number }
+type WeatherPoint = { day: string; temp: number; usage: number }
 
 export default function InsightsPage() {
+  const { user, token } = useAuthStore()
+  const meterId = user?.meterId
+
+  const [efficiencyTrend, setEfficiencyTrend] = useState<EfficiencyPoint[]>([])
+  const [applianceInsights, setApplianceInsights] = useState<ApplianceInsight[]>([])
+  const [weatherCorrelation, setWeatherCorrelation] = useState<WeatherPoint[]>([])
+
+  useEffect(() => {
+    if (!meterId) return
+
+    const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
+
+    Promise.all([
+      fetch(`${apiBaseUrl}/api/consumer/insights/efficiency?meterId=${encodeURIComponent(meterId)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      }).then((r) => r.json()),
+      fetch(`${apiBaseUrl}/api/consumer/insights/appliances?meterId=${encodeURIComponent(meterId)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      }).then((r) => r.json()),
+      fetch(`${apiBaseUrl}/api/consumer/insights/weather?meterId=${encodeURIComponent(meterId)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      }).then((r) => r.json()),
+    ])
+      .then(([effJson, applJson, weatherJson]) => {
+        setEfficiencyTrend((effJson.efficiencyTrend as EfficiencyPoint[]) ?? [])
+        setApplianceInsights((applJson.appliances as ApplianceInsight[]) ?? [])
+        setWeatherCorrelation((weatherJson.weatherCorrelation as WeatherPoint[]) ?? [])
+      })
+      .catch(() => {
+        setEfficiencyTrend([])
+        setApplianceInsights([])
+        setWeatherCorrelation([])
+      })
+  }, [meterId, token])
+
   const totalSavingsPotential = applianceInsights.reduce((sum, a) => sum + a.potential, 0)
-  const avgEfficiency = applianceInsights.reduce((sum, a) => sum + a.efficiency, 0) / applianceInsights.length
+  const avgEfficiency =
+    applianceInsights.length > 0 ? applianceInsights.reduce((sum, a) => sum + a.efficiency, 0) / applianceInsights.length : 0
 
   return (
     <DashboardLayout>
