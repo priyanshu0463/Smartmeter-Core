@@ -5,8 +5,11 @@ import random
 import datetime as dt
 from collections import defaultdict, deque
 from typing import Any, Deque, Dict, List, Optional, Set
+from concurrent.futures import ThreadPoolExecutor
 
 import jwt
+import gspread
+from google.oauth2.service_account import Credentials
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -26,6 +29,108 @@ MAX_POINTS_PER_METER = int(
     os.getenv("MAX_POINTS_PER_METER", str(int((METER_RETENTION_DAYS * 24 * 60) / max(METER_STEP_MINUTES, 1e-9))))
 )
 
+
+# ── Google Sheets integration ──────────────────────────────────────────────
+_SHEET_ID = "14rcrXzf1D7fFEXaJxYelihAcnZyedj4YqXS5Df2qzdw"
+_SA_FILE = os.path.join(os.path.dirname(__file__), "rebooktraboda-27b44cc07e68.json")
+_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+_SHEET_HEADERS = ["timestamp", "meterId", "usage_kw", "voltage_v", "current_a", "frequency_hz", "temperature_c", "cost_usd"]
+_sheets_executor = ThreadPoolExecutor(max_workers=1)
+
+def _init_sheet() -> Optional[gspread.Worksheet]:
+    try:
+        creds = Credentials.from_service_account_file(_SA_FILE, scopes=_SCOPES)
+        gc = gspread.authorize(creds)
+        ws = gc.open_by_key(_SHEET_ID).sheet1
+        # Clear any empty junk rows and ensure header is row 1
+        all_vals = ws.get_all_values()
+        # Find first non-empty row
+        first_content = next((i for i, row in enumerate(all_vals) if any(c.strip() for c in row)), None)
+        if first_content is None or all_vals[first_content][0] != "timestamp":
+            # Sheet is empty or has no valid header — clear and write header
+            ws.clear()
+            ws.insert_row(_SHEET_HEADERS, index=1)
+            print("[sheets] Initialized sheet with header row")
+        print("[sheets] Connected to Google Sheet successfully")
+        return ws
+    except Exception as e:
+        print(f"[sheets] Failed to connect: {e}")
+        return None
+
+_worksheet: Optional[gspread.Worksheet] = _init_sheet()
+
+
+def _load_history_from_sheet(meter_id: str) -> List[Dict[str, Any]]:
+    """Read all rows for a given meterId from the sheet and return as reading dicts."""
+    if _worksheet is None:
+        return []
+    try:
+        all_vals = _worksheet.get_all_values()
+        if not all_vals:
+            return []
+        # Find header row
+        header_idx = next((i for i, row in enumerate(all_vals) if row and row[0] == "timestamp"), None)
+        if header_idx is None:
+            return []
+        headers = all_vals[header_idx]
+        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=METER_RETENTION_DAYS)
+        readings: List[Dict[str, Any]] = []
+        for row in all_vals[header_idx + 1:]:
+            if not any(c.strip() for c in row):
+                continue  # skip empty rows
+            try:
+                row_dict = dict(zip(headers, row))
+                if str(row_dict.get("meterId", "")) != meter_id:
+                    continue
+                ts_str = str(row_dict["timestamp"]).replace(" IST", "+05:30")
+                ts = dt.datetime.fromisoformat(ts_str)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=dt.timezone.utc)
+                if ts < cutoff:
+                    continue
+                readings.append({
+                    "timestamp": ts,
+                    "usage": float(row_dict["usage_kw"]),
+                    "voltage": float(row_dict["voltage_v"]),
+                    "current": float(row_dict["current_a"]),
+                    "frequency": float(row_dict["frequency_hz"]),
+                    "temperatureOutside": float(row_dict["temperature_c"]),
+                    "renewable": float(solar_kw(ts.hour + ts.minute / 60.0)),
+                    "cost": float(row_dict["cost_usd"]),
+                })
+            except Exception:
+                continue
+        readings.sort(key=lambda r: r["timestamp"])
+        print(f"[sheets] Loaded {len(readings)} historical readings for {meter_id}")
+        return readings
+    except Exception as e:
+        print(f"[sheets] load history error: {e}")
+        return []
+
+
+def _append_to_sheet(reading: Dict[str, Any], meter_id: str) -> None:
+    """Blocking call — always run in the thread executor."""
+    if _worksheet is None:
+        return
+    try:
+        ts_ist = reading["timestamp"].astimezone(IST)
+        row = [
+            ts_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
+            meter_id,
+            round(reading["usage"], 3),
+            round(reading["voltage"], 2),
+            round(reading["current"], 3),
+            round(reading["frequency"], 3),
+            round(reading["temperatureOutside"], 2),
+            round(reading["cost"], 6),
+        ]
+        _worksheet.append_row(row, value_input_option="USER_ENTERED")
+    except Exception as e:
+        print(f"[sheets] append error: {e}")
+
+# ───────────────────────────────────────────────────────────────────────────
+
+IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
 def utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
@@ -106,12 +211,24 @@ class MeterStore:
         if meter_id in self._data and len(self._data[meter_id]) > 10:
             return
 
+        # Try to restore real history from Google Sheets first
+        sheet_readings = _load_history_from_sheet(meter_id)
+        if sheet_readings:
+            dq: Deque[Dict[str, Any]] = deque(maxlen=MAX_POINTS_PER_METER)
+            for r in sheet_readings[-MAX_POINTS_PER_METER:]:
+                dq.append(r)
+            self._data[meter_id] = dq
+            print(f"[store] Restored {len(dq)} readings for {meter_id} from Google Sheets")
+            return
+
+        # No sheet data — fall back to synthetic seed so the UI isn't empty
+        print(f"[store] No sheet history found for {meter_id}, seeding with synthetic data")
         now = utcnow()
         start = now - dt.timedelta(days=METER_RETENTION_DAYS)
         step = dt.timedelta(minutes=METER_STEP_MINUTES)
         points = int((now - start) / step)
 
-        dq: Deque[Dict[str, Any]] = deque(maxlen=MAX_POINTS_PER_METER)
+        dq = deque(maxlen=MAX_POINTS_PER_METER)
         for i in range(points):
             ts = start + i * step
             hour = ts.hour + ts.minute / 60.0
@@ -122,23 +239,20 @@ class MeterStore:
             temp_c = temp_outside_c(ts)
             solar = solar_kw(hour)
             rate = tariff_rate(ts)
-            # Approximate kWh over this interval.
             interval_hours = METER_STEP_MINUTES / 60.0
             energy_kwh = usage_kw * interval_hours
             cost = energy_kwh * rate
 
-            dq.append(
-                {
-                    "timestamp": ts,
-                    "usage": float(usage_kw),
-                    "voltage": float(voltage),
-                    "current": float(current_a),
-                    "frequency": float(frequency),
-                    "temperatureOutside": float(temp_c),
-                    "renewable": float(solar),
-                    "cost": float(cost),
-                }
-            )
+            dq.append({
+                "timestamp": ts,
+                "usage": float(usage_kw),
+                "voltage": float(voltage),
+                "current": float(current_a),
+                "frequency": float(frequency),
+                "temperatureOutside": float(temp_c),
+                "renewable": float(solar),
+                "cost": float(cost),
+            })
 
         self._data[meter_id] = dq
 
@@ -297,12 +411,16 @@ async def simulator_ingest(body: IngestReadingRequest):
 
     store.add_reading(body.meterId, reading)
 
+    # Persist to Google Sheets (non-blocking)
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(_sheets_executor, _append_to_sheet, reading, body.meterId)
+
     # Broadcast to websocket subscribers.
     conns = list(store._connections.get(body.meterId, set()))
     if conns:
         msg = {
             "meterId": body.meterId,
-            "timestamp": ts.isoformat(),
+            "timestamp": ts.astimezone(IST).strftime("%H:%M:%S"),
             "usage": reading["usage"],
             "voltage": reading["voltage"],
             "current": reading["current"],
@@ -330,7 +448,7 @@ def consumer_realtime(meterId: str = Query(...)):
         raise HTTPException(status_code=404, detail="No data for meter")
     return {
         "meterId": meterId,
-        "timestamp": latest["timestamp"].isoformat(),
+        "timestamp": latest["timestamp"].astimezone(IST).strftime("%H:%M:%S"),
         "usage": latest["usage"],
         "voltage": latest["voltage"],
         "current": latest["current"],
@@ -380,7 +498,7 @@ def consumer_dashboard(
         total_cost += float(r["usage"]) * dt_hours * tariff_rate(t_start)
 
     avg_usage_kw = float(latest["usage"])
-    # Timeline: hourly buckets over last 24h (avg kW).
+    # Timeline: hourly buckets over last 24h (avg kW) — labels in IST
     timeline: List[Dict[str, Any]] = []
     for i in range(24):
         b_start = now - dt.timedelta(hours=(23 - i))
@@ -389,7 +507,7 @@ def consumer_dashboard(
         if not bucket:
             continue
         avg_kw = sum(r["usage"] for r in bucket) / len(bucket)
-        timeline.append({"time": b_start.strftime("%H:%M"), "usage": round(avg_kw, 3)})
+        timeline.append({"time": b_start.astimezone(IST).strftime("%H:%M"), "usage": round(avg_kw, 3)})
 
     # Weekly comparison: energy per day for last 7 days vs previous 7 days.
     start_this = now - dt.timedelta(days=7)
@@ -462,29 +580,47 @@ def consumer_history(
     history_range: str = Query("day", alias="range", pattern="^(day|week|month|year)$"),
 ):
     store.ensure_meter(meterId)
-    now = utcnow()
+    now_utc = utcnow()
+    now_ist = now_utc.astimezone(IST)
 
     if history_range == "day":
         count = 24
-        start = now - dt.timedelta(hours=24)
+        # Align to the start of the current hour in IST
+        start_ist = (now_ist - dt.timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
+        start = start_ist.astimezone(dt.timezone.utc)
         bucket_span = dt.timedelta(hours=1)
     elif history_range == "week":
         count = 7
-        start = now - dt.timedelta(days=7)
+        start = now_utc - dt.timedelta(days=7)
         bucket_span = dt.timedelta(days=1)
     elif history_range == "month":
         count = 30
-        start = now - dt.timedelta(days=30)
+        start = now_utc - dt.timedelta(days=30)
         bucket_span = dt.timedelta(days=1)
     else:
         count = 12
-        start = now - dt.timedelta(days=365)
+        start = now_utc - dt.timedelta(days=365)
         bucket_span = dt.timedelta(days=365 / 12)
+
+    day_names_short = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
     data: List[Dict[str, Any]] = []
     for idx in range(count):
         b_start = start + idx * bucket_span
         b_end = b_start + bucket_span
+
+        # Human-readable IST label
+        b_start_ist = b_start.astimezone(IST)
+        if history_range == "day":
+            label = b_start_ist.strftime("%H:%M")
+        elif history_range == "week":
+            label = f"{day_names_short[b_start_ist.weekday()]} {b_start_ist.strftime('%d/%m')}"
+        elif history_range == "month":
+            label = b_start_ist.strftime("%d %b")
+        else:
+            label = month_names[b_start_ist.month - 1]
+
         rs = store.approximate_energy_kwh(meterId, b_start, b_end)
         if not rs:
             usage_kwh = 0.0
@@ -507,9 +643,9 @@ def consumer_history(
 
         data.append(
             {
-                "label": bucket_label(history_range, idx),
+                "label": label,
                 "usage": round(usage_kwh, 3),
-                "cost": round(cost, 3),
+                "cost": round(cost, 4),
                 "temperature": round(avg_temp, 2),
                 "peakDemand": round(peak_kw, 3),
             }

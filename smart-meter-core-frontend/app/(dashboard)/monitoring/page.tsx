@@ -38,7 +38,7 @@ export default function RealTimeMonitoring() {
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={liveData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                    <XAxis dataKey="timestamp" hide />
+                    <XAxis dataKey="timestamp" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} interval={4} />
                     <YAxis domain={[220, 245]} stroke="var(--muted-foreground)" />
                     <Tooltip
                       contentStyle={{
@@ -70,7 +70,7 @@ export default function RealTimeMonitoring() {
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={liveData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                    <XAxis dataKey="timestamp" hide />
+                    <XAxis dataKey="timestamp" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} interval={4} />
                     <YAxis stroke="var(--muted-foreground)" />
                     <Tooltip
                       contentStyle={{
