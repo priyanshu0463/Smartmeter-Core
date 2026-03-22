@@ -169,9 +169,13 @@ export default function HistoricalPage() {
                   <XAxis
                     dataKey="label"
                     stroke="var(--muted-foreground)"
-                    fontSize={12}
+                    fontSize={11}
                     tickLine={false}
                     axisLine={false}
+                    interval={timeRange === "day" ? 2 : 0}
+                    angle={timeRange === "day" ? -45 : 0}
+                    textAnchor={timeRange === "day" ? "end" : "middle"}
+                    height={timeRange === "day" ? 50 : 30}
                   />
                   <YAxis
                     yAxisId="left"
@@ -179,7 +183,7 @@ export default function HistoricalPage() {
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
-                    label={{ value: "kWh", angle: -90, position: "insideLeft" }}
+                    label={{ value: "kWh", angle: -90, position: "insideLeft", offset: 10 }}
                   />
                   <YAxis
                     yAxisId="right"
@@ -188,13 +192,19 @@ export default function HistoricalPage() {
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
-                    label={{ value: "$", angle: 90, position: "insideRight" }}
+                    label={{ value: "₹", angle: 90, position: "insideRight", offset: 10 }}
+                    tickFormatter={(v) => `₹${v.toFixed(3)}`}
                   />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: "var(--card)",
                       borderColor: "var(--border)",
                       borderRadius: "var(--radius)",
+                    }}
+                    formatter={(value: number, name: string) => {
+                      if (name === "Cost ($)") return [`₹${value.toFixed(4)}`, "Cost"]
+                      if (name === "Usage (kWh)") return [`${value.toFixed(3)} kWh`, "Usage"]
+                      return [value, name]
                     }}
                   />
                   <Legend />
@@ -236,9 +246,13 @@ export default function HistoricalPage() {
                   <XAxis
                     dataKey="label"
                     stroke="var(--muted-foreground)"
-                    fontSize={12}
+                    fontSize={11}
                     tickLine={false}
                     axisLine={false}
+                    interval={timeRange === "day" ? 2 : 0}
+                    angle={timeRange === "day" ? -45 : 0}
+                    textAnchor={timeRange === "day" ? "end" : "middle"}
+                    height={timeRange === "day" ? 50 : 30}
                   />
                   <YAxis
                     yAxisId="left"
@@ -246,6 +260,7 @@ export default function HistoricalPage() {
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
+                    label={{ value: "kW", angle: -90, position: "insideLeft", offset: 10 }}
                   />
                   <YAxis
                     yAxisId="right"
@@ -254,12 +269,18 @@ export default function HistoricalPage() {
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
+                    label={{ value: "°C", angle: 90, position: "insideRight", offset: 10 }}
                   />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: "var(--card)",
                       borderColor: "var(--border)",
                       borderRadius: "var(--radius)",
+                    }}
+                    formatter={(value: number, name: string) => {
+                      if (name === "Temperature (°C)") return [`${value.toFixed(1)}°C`, "Temp"]
+                      if (name === "Peak Demand (kW)") return [`${value.toFixed(3)} kW`, "Peak Demand"]
+                      return [value, name]
                     }}
                   />
                   <Legend />
@@ -270,6 +291,7 @@ export default function HistoricalPage() {
                     dataKey="temperature"
                     stroke="var(--destructive)"
                     strokeWidth={2}
+                    dot={false}
                     name="Temperature (°C)"
                   />
                 </ComposedChart>
