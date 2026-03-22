@@ -51,3 +51,7 @@ See:
 - `smart-meter-core-backend/README.md`
 - `smart-meter-core-backend/README_SIMULATOR.md` (if you create custom simulator adapters later)
 
+## Running steps after setup
+# Backend : METER_STEP_MINUTES=0.05 ./.venv/bin/uvicorn smart-meter-core-backend.main:app --host 0.0.0.0 --port 8000 --reload
+
+# virtual samrtmeter : ./.venv/bin/python smart-meter-core-backend/simulator_run.py --backend-url http://localhost:8000 --meter-id MTR-8829-X1 --interval-seconds 3
