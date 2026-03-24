@@ -62,6 +62,10 @@ See:
 ## Dashboard Pages — Graph & Chart Reference
 
 ### Dashboard (`/dashboard/dashboard`)
+<img width="1711" height="836" alt="Screenshot from 2026-03-24 17-43-04" src="https://github.com/user-attachments/assets/1d16607b-8a3f-436b-a2a0-e91e6ac51029" />
+
+
+<img width="1688" height="266" alt="Screenshot from 2026-03-24 17-44-40" src="https://github.com/user-attachments/assets/255ae1cc-238c-4b76-8eed-0bef912e5d2f" />
 
 **Live Power (last 20 readings)**
 Area chart showing the most recent 20 WebSocket readings from the smart meter. X-axis shows IST time (`HH:MM:SS`), Y-axis shows instantaneous power in kW. Updates every 3 seconds as the simulator sends new readings. Useful for spotting sudden load spikes or drops in real time.
@@ -79,6 +83,9 @@ Bar chart splitting the last 24 hours of estimated cost into two categories: Pea
 
 ### Real-Time Monitoring (`/dashboard/monitoring`)
 
+<img width="1695" height="876" alt="Screenshot from 2026-03-24 17-45-46" src="https://github.com/user-attachments/assets/1b11a80c-785f-4b64-9e12-fefd7e617c3b" />
+
+
 **Voltage Fluctuations (240V Nominal)**
 Step line chart of voltage (V) from the last 20 live readings. Y-axis is fixed between 220V–245V. Useful for detecting grid instability, voltage sags, or surges that could damage appliances.
 
@@ -88,6 +95,11 @@ Line chart overlaying two series from the last 20 live readings: Current (A) and
 ---
 
 ### Historical Analysis (`/dashboard/historical`)
+
+<img width="1697" height="791" alt="Screenshot from 2026-03-24 17-48-28" src="https://github.com/user-attachments/assets/7fbb9118-6879-4637-8488-1f6a6d531301" />
+
+<img width="1687" height="334" alt="Screenshot from 2026-03-24 17-48-45" src="https://github.com/user-attachments/assets/bba10f97-ad13-4f3c-ac76-a281e14de766" />
+
 
 Time range selector: 24 Hours / 7 Days / 30 Days / 12 Months. All data comes from real readings stored in Google Sheets and loaded into the backend on startup.
 
@@ -100,6 +112,11 @@ Composed chart with dual Y-axes. Left axis: peak instantaneous demand (kW) per b
 ---
 
 ### Load Forecast (`/dashboard/forecast`)
+
+<img width="1687" height="703" alt="Screenshot from 2026-03-24 17-50-22" src="https://github.com/user-attachments/assets/e25f5aac-7f4b-48d5-b9d0-5bd0e63d07d5" />
+
+
+<img width="1691" height="363" alt="Screenshot from 2026-03-24 17-50-52" src="https://github.com/user-attachments/assets/a940c385-45a8-4c63-88cd-92333c895fbe" />
 
 **Hourly Load Prediction (24-Hour tab)**
 Composed chart showing the next 24 hours. Three layers: a shaded confidence band (upper/lower bounds), the predicted load line (kW) in the primary colour, and a dashed line for expected solar generation (kW). X-axis shows hour offsets (0:00 = next hour). Useful for planning when to shift flexible loads like EV charging or water heating.
@@ -117,6 +134,11 @@ Radar chart with five time-of-day categories: Morning, Midday, Afternoon, Evenin
 
 ### AI Insights (`/dashboard/insights`)
 
+<img width="1684" height="600" alt="Screenshot from 2026-03-24 17-52-13" src="https://github.com/user-attachments/assets/a4fdffd3-183c-4e2c-954a-c6c0a80b6bb0" />
+
+<img width="1693" height="775" alt="Screenshot from 2026-03-24 17-52-44" src="https://github.com/user-attachments/assets/73076217-07ba-4ee5-ad8d-a851e8163d57" />
+
+
 **Energy Efficiency Trend**
 Area chart showing a 12-month rolling efficiency score (0–100) for the meter vs a fixed benchmark line (85). Higher is better. Useful for tracking whether efficiency improvements are sticking over time.
 
@@ -129,6 +151,9 @@ Composed chart with dual Y-axes. Left axis: average daily energy usage (kWh) as 
 ---
 
 ### AI Chat (`/dashboard/ai-chat`)
+
+<img width="979" height="853" alt="Screenshot from 2026-03-24 17-54-23" src="https://github.com/user-attachments/assets/891c725d-c59a-471a-8ef4-10ecde3bcb41" />
+
 
 Not a chart page — conversational interface. Responses include inline charts based on keywords:
 - "peak" / "hours" → line chart of daily peak usage pattern by hour
