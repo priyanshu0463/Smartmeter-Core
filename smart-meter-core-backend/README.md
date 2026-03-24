@@ -10,7 +10,7 @@ MVP connected backend for end-to-end frontend testing:
 ### 1) Start backend
 From repo root:
 ```bash
-./.venv/bin/uvicorn smart-meter-core-backend.main:app --host 0.0.0.0 --port 8000
+METER_STEP_MINUTES=0.05 ./.venv/bin/uvicorn smart-meter-core-backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### 2) Start simulator
@@ -19,6 +19,33 @@ In another terminal:
 cd smart-meter-core-backend
 ./../.venv/bin/python simulator_run.py --backend-url http://localhost:8000 --meter-id MTR-8829-X1 --interval-seconds 3
 ```
+
+## Google Sheets Integration
+The backend persists every meter reading to a Google Sheet and restores history from it on startup — so no data is lost when the backend restarts.
+
+### Setup
+1. Create a Google Cloud project and enable **Google Sheets API** and **Google Drive API**
+2. Go to **IAM & Admin → Service Accounts → Create Service Account**
+3. Under the service account's **Keys** tab, create a new JSON key — it downloads automatically
+4. Place the downloaded `.json` file inside `smart-meter-core-backend/`
+5. Share your Google Sheet with the service account's `client_email` (Editor access)
+
+### Configuration (in `main.py`)
+```python
+_SHEET_ID = "your-google-sheet-id"          # from the sheet URL
+_SA_FILE  = "your-service-account-file.json" # filename inside smart-meter-core-backend/
+```
+
+### Behaviour
+- On startup: reads all rows from the sheet for the configured `meterId` and loads them into the in-memory store (up to `METER_RETENTION_DAYS`)
+- On each simulator ingest: appends a new row asynchronously (non-blocking) with IST timestamp
+- Sheet columns: `timestamp | meterId | usage_kw | voltage_v | current_a | frequency_hz | temperature_c | cost_usd`
+- Timestamps are stored as `YYYY-MM-DD HH:MM:SS IST` for human readability
+- If the sheet is empty or has no valid header, it is initialised automatically on startup
+
+### Security
+The service account JSON file contains a private key — **never commit it to git**.
+It is already covered by `.gitignore` (`smart-meter-core-backend/*.json`).
 
 ## Environment Variables (MVP)
 - `JWT_SECRET`: JWT signing key (default: `dev-secret`)
