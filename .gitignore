@@ -34,3 +34,6 @@ smart-meter-core-frontend/coverage/
 .DS_Store
 
 smart-meter-core-backend/forcasting model/data - Copy.csv
+
+# Google service account credentials
+smart-meter-core-backend/*.json
