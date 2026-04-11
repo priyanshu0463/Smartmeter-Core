@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Calendar, TrendingUp, TrendingDown, Download } from "lucide-react"
+import { useAuthStore } from "@/lib/store/use-auth-store"
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -22,52 +23,45 @@ import {
 
 type TimeRange = "day" | "week" | "month" | "year"
 
-// <CHANGE> Generate mock historical data for different time ranges
-const generateHistoricalData = (range: TimeRange) => {
-  const counts = { day: 24, week: 168, month: 30, year: 12 }
-  const count = counts[range]
-  const labels = {
-    day: (i: number) => `${i}:00`,
-    week: (i: number) => {
-      const day = Math.floor(i / 24)
-      const hour = i % 24
-      return day === 0 && hour === 0 ? "Mon" : day === 1 && hour === 0 ? "Tue" : ""
-    },
-    month: (i: number) => `Day ${i + 1}`,
-    year: (i: number) => {
-      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-      return months[i]
-    },
-  }
-
-  return Array.from({ length: count }, (_, i) => {
-    const baseUsage = range === "year" ? 400 : range === "month" ? 15 : 3
-    const variation = range === "year" ? 150 : range === "month" ? 5 : 2
-
-    return {
-      label: labels[range](i),
-      usage: Math.random() * variation + baseUsage - variation / 2,
-      cost: (Math.random() * variation + baseUsage - variation / 2) * 0.12,
-      temperature: Math.random() * 10 + 20,
-      peakDemand: Math.random() * (variation * 1.5) + baseUsage,
-    }
-  })
+type HistoryPoint = {
+  label: string
+  usage: number
+  cost: number
+  temperature: number
+  peakDemand: number
 }
 
 export default function HistoricalPage() {
+  const { user, token } = useAuthStore()
   const [timeRange, setTimeRange] = useState<TimeRange>("day")
-  const [data, setData] = useState(generateHistoricalData("day"))
+  const [data, setData] = useState<HistoryPoint[]>([])
 
   useEffect(() => {
-    setData(generateHistoricalData(timeRange))
-  }, [timeRange])
+    const meterId = user?.meterId
+    if (!meterId) return
+
+    const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
+    const url = `${apiBaseUrl}/api/consumer/history?meterId=${encodeURIComponent(meterId)}&range=${timeRange}`
+    setData([])
+
+    fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error(`history fetch failed: ${r.status}`)
+        return r.json()
+      })
+      .then((json) => setData(json.data as HistoryPoint[]))
+      .catch(() => setData([]))
+  }, [timeRange, user?.meterId, token])
 
   // <CHANGE> Calculate summary statistics
+
   const totalUsage = data.reduce((sum, d) => sum + d.usage, 0)
   const totalCost = data.reduce((sum, d) => sum + d.cost, 0)
-  const avgUsage = totalUsage / data.length
-  const maxUsage = Math.max(...data.map((d) => d.usage))
-  const avgCostPerUnit = totalCost / totalUsage
+  const avgUsage = data.length ? totalUsage / data.length : 0
+  const maxUsage = data.length ? Math.max(...data.map((d) => d.usage)) : 0
+  const avgCostPerUnit = totalUsage ? totalCost / totalUsage : 0
 
   return (
     <DashboardLayout>
@@ -175,9 +169,13 @@ export default function HistoricalPage() {
                   <XAxis
                     dataKey="label"
                     stroke="var(--muted-foreground)"
-                    fontSize={12}
+                    fontSize={11}
                     tickLine={false}
                     axisLine={false}
+                    interval={timeRange === "day" ? 2 : 0}
+                    angle={timeRange === "day" ? -45 : 0}
+                    textAnchor={timeRange === "day" ? "end" : "middle"}
+                    height={timeRange === "day" ? 50 : 30}
                   />
                   <YAxis
                     yAxisId="left"
@@ -185,7 +183,7 @@ export default function HistoricalPage() {
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
-                    label={{ value: "kWh", angle: -90, position: "insideLeft" }}
+                    label={{ value: "kWh", angle: -90, position: "insideLeft", offset: 10 }}
                   />
                   <YAxis
                     yAxisId="right"
@@ -194,13 +192,19 @@ export default function HistoricalPage() {
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
-                    label={{ value: "$", angle: 90, position: "insideRight" }}
+                    label={{ value: "₹", angle: 90, position: "insideRight", offset: 10 }}
+                    tickFormatter={(v) => `₹${v.toFixed(3)}`}
                   />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: "var(--card)",
                       borderColor: "var(--border)",
                       borderRadius: "var(--radius)",
+                    }}
+                    formatter={(value: number, name: string) => {
+                      if (name === "Cost ($)") return [`₹${value.toFixed(4)}`, "Cost"]
+                      if (name === "Usage (kWh)") return [`${value.toFixed(3)} kWh`, "Usage"]
+                      return [value, name]
                     }}
                   />
                   <Legend />
@@ -242,9 +246,13 @@ export default function HistoricalPage() {
                   <XAxis
                     dataKey="label"
                     stroke="var(--muted-foreground)"
-                    fontSize={12}
+                    fontSize={11}
                     tickLine={false}
                     axisLine={false}
+                    interval={timeRange === "day" ? 2 : 0}
+                    angle={timeRange === "day" ? -45 : 0}
+                    textAnchor={timeRange === "day" ? "end" : "middle"}
+                    height={timeRange === "day" ? 50 : 30}
                   />
                   <YAxis
                     yAxisId="left"
@@ -252,6 +260,7 @@ export default function HistoricalPage() {
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
+                    label={{ value: "kW", angle: -90, position: "insideLeft", offset: 10 }}
                   />
                   <YAxis
                     yAxisId="right"
@@ -260,12 +269,18 @@ export default function HistoricalPage() {
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
+                    label={{ value: "°C", angle: 90, position: "insideRight", offset: 10 }}
                   />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: "var(--card)",
                       borderColor: "var(--border)",
                       borderRadius: "var(--radius)",
+                    }}
+                    formatter={(value: number, name: string) => {
+                      if (name === "Temperature (°C)") return [`${value.toFixed(1)}°C`, "Temp"]
+                      if (name === "Peak Demand (kW)") return [`${value.toFixed(3)} kW`, "Peak Demand"]
+                      return [value, name]
                     }}
                   />
                   <Legend />
@@ -276,6 +291,7 @@ export default function HistoricalPage() {
                     dataKey="temperature"
                     stroke="var(--destructive)"
                     strokeWidth={2}
+                    dot={false}
                     name="Temperature (°C)"
                   />
                 </ComposedChart>

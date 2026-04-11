@@ -19,9 +19,9 @@ export default function LoginPage() {
   const login = useAuthStore((state) => state.login)
   const router = useRouter()
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    login(email || "demo@smartmeter.io", role, meterId)
+    await login(email || "demo@smartmeter.io", role, meterId)
     router.push(role === "UTILITY" ? "/utility/dashboard" : role === "ADMIN" ? "/admin/health" : "/dashboard")
   }
 

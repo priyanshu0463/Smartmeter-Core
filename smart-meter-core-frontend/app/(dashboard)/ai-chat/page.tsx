@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { Send, Bot, User, Sparkles, TrendingUp, DollarSign, BarChart3, Lightbulb } from "lucide-react"
 import {
@@ -81,6 +80,7 @@ export default function AIChatPage() {
   const [input, setInput] = useState("")
   const [isTyping, setIsTyping] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
 
   const generateResponse = (userQuery: string): Message => {
     const query = userQuery.toLowerCase()
@@ -177,9 +177,7 @@ export default function AIChatPage() {
   }
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages, isTyping])
 
   const renderChart = (chart: Message["chart"]) => {
@@ -282,11 +280,11 @@ export default function AIChatPage() {
         </div>
 
         <Card className="flex-1 flex flex-col overflow-hidden mb-4">
-          <ScrollArea className="flex-1 p-4" ref={scrollRef}>
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 min-h-0">
             <div className="space-y-4">
               {messages.map((msg) => (
                 <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
-                  <Avatar className="h-9 w-9 border-2 border-border">
+                  <Avatar className="h-9 w-9 border-2 border-border flex-shrink-0">
                     <AvatarFallback className={msg.role === "assistant" ? "bg-primary/10 text-primary" : "bg-muted"}>
                       {msg.role === "assistant" ? <Bot className="h-5 w-5" /> : <User className="h-5 w-5" />}
                     </AvatarFallback>
@@ -313,7 +311,7 @@ export default function AIChatPage() {
 
               {isTyping && (
                 <div className="flex gap-3">
-                  <Avatar className="h-9 w-9 border-2 border-border">
+                  <Avatar className="h-9 w-9 border-2 border-border flex-shrink-0">
                     <AvatarFallback className="bg-primary/10 text-primary">
                       <Bot className="h-5 w-5" />
                     </AvatarFallback>
@@ -325,8 +323,9 @@ export default function AIChatPage() {
                   </div>
                 </div>
               )}
+              <div ref={bottomRef} />
             </div>
-          </ScrollArea>
+          </div>
 
           <div className="p-4 border-t bg-card">
             <div className="flex gap-2">

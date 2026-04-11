@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import { useAuthStore } from "@/lib/store/use-auth-store"
 
 interface EnergyData {
   timestamp: string
@@ -10,18 +11,17 @@ interface EnergyData {
 
 interface EnergyState {
   liveData: EnergyData[]
-  historicalData: EnergyData[]
   totalUsageToday: number
   estimatedBill: number
   isLive: boolean
   addLiveData: (data: EnergyData) => void
   setLive: (live: boolean) => void
-  fetchHistorical: (range: "day" | "week" | "month") => void
+  setDashboardSummary: (dailyUsage: number, estimatedBill: number) => void
+  fetchDashboard: (meterId: string) => Promise<void>
 }
 
 export const useEnergyStore = create<EnergyState>((set, get) => ({
   liveData: [],
-  historicalData: [],
   totalUsageToday: 12.4,
   estimatedBill: 145.5,
   isLive: true,
@@ -31,16 +31,18 @@ export const useEnergyStore = create<EnergyState>((set, get) => ({
       const newData = [...state.liveData, data].slice(-20)
       return { liveData: newData }
     }),
-  fetchHistorical: (range) => {
-    // Mock historical data generation
-    const count = range === "day" ? 24 : range === "week" ? 7 : 30
-    const mockHistory = Array.from({ length: count }, (_, i) => ({
-      timestamp: new Date(Date.now() - i * 3600000).toISOString(),
-      usage: Math.random() * 5 + 1,
-      voltage: 230 + (Math.random() - 0.5) * 5,
-      current: Math.random() * 10,
-      frequency: 50 + (Math.random() - 0.5) * 0.2,
-    })).reverse()
-    set({ historicalData: mockHistory })
+  setDashboardSummary: (dailyUsage, estimatedBill) => set({ totalUsageToday: dailyUsage, estimatedBill }),
+  fetchDashboard: async (meterId) => {
+    const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
+    const token = useAuthStore.getState().token
+
+    const res = await fetch(`${apiBaseUrl}/api/consumer/dashboard?meterId=${encodeURIComponent(meterId)}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    if (!res.ok) {
+      throw new Error(`fetchDashboard failed: ${res.status}`)
+    }
+    const data = await res.json()
+    set({ totalUsageToday: data.dailyUsage, estimatedBill: data.estimatedBill })
   },
 }))
