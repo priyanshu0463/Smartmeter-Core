@@ -263,6 +263,10 @@ See `smart-meter-core-backend/README.md` for full setup instructions.
 
 ### Dashboard (`/dashboard/dashboard`)
 
+<img width="1711" height="836" alt="Dashboard main view" src="https://github.com/user-attachments/assets/1d16607b-8a3f-436b-a2a0-e91e6ac51029" />
+
+<img width="1688" height="266" alt="Dashboard weekly and cost breakdown" src="https://github.com/user-attachments/assets/255ae1cc-238c-4b76-8eed-0bef912e5d2f" />
+
 **Live Power (last 20 readings)**
 Area chart of the most recent 20 WebSocket readings. X-axis: IST time (`HH:MM:SS`). Y-axis: kW. Updates every 3 seconds.
 
@@ -273,25 +277,35 @@ Area chart of average kW per hour over the last 24 hours in IST. Built from real
 Bar chart: average kWh/day this week vs last week.
 
 **Cost Breakdown (Last 24h)**
-Bar chart: peak-hour cost vs off-peak cost in ₹.
-
----
-
 ### Real-Time Monitoring (`/dashboard/monitoring`)
+
+<img width="1695" height="876" alt="Real-time monitoring" src="https://github.com/user-attachments/assets/1b11a80c-785f-4b64-9e12-fefd7e617c3b" />
 
 **Voltage Fluctuations**
 Step line chart of live voltage (V). Y-axis fixed 220–245V. Detects grid instability and surges.
 
 **Current Load Analysis**
 Dual line chart: current (A) and power (kW) from the last 20 live readings.
+Step line chart of live voltage (V). Y-axis fixed 220–245V. Detects grid instability and surges.
+### Historical Analysis (`/dashboard/historical`)
+
+<img width="1697" height="791" alt="Historical analysis trend" src="https://github.com/user-attachments/assets/7fbb9118-6879-4637-8488-1f6a6d531301" />
+
+<img width="1687" height="334" alt="Peak demand vs temperature" src="https://github.com/user-attachments/assets/bba10f97-ad13-4f3c-ac76-a281e14de766" />
+
+Time range: 24h / 7d / 30d / 12m. All data from Google Sheets.ive readings.
 
 ---
 
 ### Historical Analysis (`/dashboard/historical`)
 
-Time range: 24h / 7d / 30d / 12m. All data from Google Sheets.
+### Load Forecast (`/dashboard/forecast`)
 
-**Energy Consumption Trend**
+<img width="1687" height="703" alt="Load forecast hourly" src="https://github.com/user-attachments/assets/e25f5aac-7f4b-48d5-b9d0-5bd0e63d07d5" />
+
+<img width="1691" height="363" alt="Grid price and net load" src="https://github.com/user-attachments/assets/a940c385-45a8-4c63-88cd-92333c895fbe" />
+
+**Hourly Load Prediction****
 Dual-axis composed chart. Left: kWh (area). Right: cost ₹ (line). IST-aware X-axis labels.
 
 **Peak Demand vs Temperature**
@@ -301,15 +315,21 @@ Dual-axis composed chart. Left: peak kW (bars). Right: temperature °C (line). S
 
 ### Load Forecast (`/dashboard/forecast`)
 
-**Hourly Load Prediction**
-Composed chart: confidence band + predicted kW line + solar generation dashed line.
+### AI Insights (`/dashboard/insights`)
 
+<img width="1684" height="600" alt="AI insights overview" src="https://github.com/user-attachments/assets/a4fdffd3-183c-4e2c-954a-c6c0a80b6bb0" />
+
+<img width="1693" height="775" alt="Appliance and weather analysis" src="https://github.com/user-attachments/assets/73076217-07ba-4ee5-ad8d-a851e8163d57" />
+
+**Efficiency Trend** — 12-month score vs benchmark (area + line).
 **Grid Price & Net Load**
 Dual-axis: net load bars (kW) + grid price step line (₹/kWh). Highlights peak pricing windows.
 
-**7-Day Forecast**
-Grouped bars: usage (kWh) + renewable (kWh) per day + cost line (₹).
+### AI Chat (`/dashboard/ai-chat`)
 
+<img width="979" height="853" alt="AI chat interface" src="https://github.com/user-attachments/assets/891c725d-c59a-471a-8ef4-10ecde3bcb41" />
+
+Conversational interface with inline charts.
 **Load Profile Radar**
 Radar chart: Current vs Predicted vs Optimal across Morning / Midday / Afternoon / Evening / Night.
 
@@ -378,6 +398,4 @@ See `ppt.md` for full hardware specifications and cost breakdown.
 
 ---
 
-## License
 
-MIT
