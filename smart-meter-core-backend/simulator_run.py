@@ -55,7 +55,7 @@ def main() -> None:
     parser.add_argument("--interval-seconds", type=float, default=3.0)
     args = parser.parse_args()
 
-    ingest_url = f"{args.backend_url}/simulator/ingest"
+    ingest_url = f"{args.backend_url}/simulator/ingest/v2"
     print(f"[simulator] Posting to: {ingest_url}")
     print(f"[simulator] meterId={args.meter_id}")
 

@@ -885,3 +885,547 @@ def consumer_devices(meterId: str = Query(...)):
         d["load"] = f"{d['currentUsageKw']:.1f} kW"
     return {"devices": devices}
 
+
+# ── Alert & Automation Engine ──────────────────────────────────────────────
+
+import uuid
+
+# ── Virtual Load definitions (represent physical bulbs/appliances for demo) ──
+# Each load has a rated_kw (simulated wattage) and a controllable flag.
+# For the hardware demo: load_id maps to a GPIO pin or relay channel.
+VIRTUAL_LOADS: List[Dict[str, Any]] = [
+    {
+        "id": "load_geyser",
+        "name": "Geyser",
+        "type": "water_heater",
+        "rated_kw": 2.0,
+        "priority": "Medium",
+        "gpio_pin": 17,          # placeholder – wire to relay when hardware is ready
+        "status": True,
+        "auto_controlled": False,
+        "room": "Bathroom",
+    },
+    {
+        "id": "load_ac",
+        "name": "Air Conditioner",
+        "type": "hvac",
+        "rated_kw": 1.5,
+        "priority": "High",
+        "gpio_pin": 27,
+        "status": True,
+        "auto_controlled": False,
+        "room": "Bedroom",
+    },
+    {
+        "id": "load_fridge",
+        "name": "Refrigerator",
+        "type": "refrigerator",
+        "rated_kw": 0.15,
+        "priority": "High",
+        "gpio_pin": 22,
+        "status": True,
+        "auto_controlled": False,
+        "room": "Kitchen",
+    },
+    {
+        "id": "load_bulb_demo",
+        "name": "Demo Bulb",
+        "type": "light",
+        "rated_kw": 0.06,
+        "priority": "Low",
+        "gpio_pin": 23,
+        "status": True,
+        "auto_controlled": False,
+        "room": "Demo",
+    },
+]
+
+# In-memory mutable state for loads (status can be toggled)
+_load_state: Dict[str, Dict[str, Any]] = {l["id"]: dict(l) for l in VIRTUAL_LOADS}
+
+# ── Alert thresholds ──────────────────────────────────────────────────────
+ALERT_THRESHOLDS = {
+    "high_usage":       {"field": "usage",     "op": ">",  "value": 4.5,   "severity": "warning",  "message": "High power consumption detected ({val:.2f} kW). Consider shifting non-essential loads."},
+    "critical_usage":   {"field": "usage",     "op": ">",  "value": 6.0,   "severity": "critical", "message": "Critical overload: {val:.2f} kW. Auto load-shedding triggered."},
+    "low_voltage":      {"field": "voltage",   "op": "<",  "value": 210.0, "severity": "warning",  "message": "Low voltage detected: {val:.1f} V. Grid instability possible."},
+    "high_voltage":     {"field": "voltage",   "op": ">",  "value": 250.0, "severity": "warning",  "message": "High voltage: {val:.1f} V. Risk of appliance damage."},
+    "freq_low":         {"field": "frequency", "op": "<",  "value": 49.5,  "severity": "warning",  "message": "Grid frequency low: {val:.2f} Hz. Grid under stress."},
+    "freq_high":        {"field": "frequency", "op": ">",  "value": 50.5,  "severity": "warning",  "message": "Grid frequency high: {val:.2f} Hz."},
+    "peak_pricing":     {"field": "_tariff",   "op": "==", "value": 0.25,  "severity": "info",     "message": "Peak pricing active (₹0.25/kWh). Shift deferrable loads to off-peak."},
+    "off_peak_window":  {"field": "_tariff",   "op": "==", "value": 0.12,  "severity": "info",     "message": "Off-peak window active (₹0.12/kWh). Good time to run heavy loads."},
+}
+
+# ── Alert store ───────────────────────────────────────────────────────────
+class AlertStore:
+    def __init__(self) -> None:
+        self._alerts: Dict[str, Dict[str, Any]] = {}          # id -> alert
+        self._active_keys: Dict[str, str] = {}                # threshold_key -> alert_id (dedup)
+        self._connections: Dict[str, Set[WebSocket]] = defaultdict(set)  # meterId -> ws set
+
+    def _make_alert(self, meter_id: str, key: str, severity: str, message: str) -> Dict[str, Any]:
+        alert_id = str(uuid.uuid4())
+        alert = {
+            "id": alert_id,
+            "meterId": meter_id,
+            "key": key,
+            "severity": severity,
+            "message": message,
+            "timestamp": utcnow().astimezone(IST).isoformat(),
+            "dismissed": False,
+            "acknowledged": False,
+        }
+        self._alerts[alert_id] = alert
+        self._active_keys[f"{meter_id}:{key}"] = alert_id
+        return alert
+
+    def evaluate(self, meter_id: str, reading: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Check reading against thresholds; return list of new alerts fired."""
+        new_alerts: List[Dict[str, Any]] = []
+        rate = tariff_rate(reading["timestamp"])
+
+        for key, cfg in ALERT_THRESHOLDS.items():
+            field = cfg["field"]
+            op = cfg["op"]
+            threshold = cfg["value"]
+
+            if field == "_tariff":
+                val = rate
+            else:
+                val = reading.get(field)
+                if val is None:
+                    continue
+
+            triggered = False
+            if op == ">" and val > threshold:
+                triggered = True
+            elif op == "<" and val < threshold:
+                triggered = True
+            elif op == "==" and abs(val - threshold) < 1e-9:
+                triggered = True
+
+            dedup_key = f"{meter_id}:{key}"
+            if triggered:
+                # Only fire a new alert if there isn't already an active (non-dismissed) one for this key
+                existing_id = self._active_keys.get(dedup_key)
+                if existing_id and not self._alerts.get(existing_id, {}).get("dismissed", True):
+                    continue  # already active
+                msg = cfg["message"].format(val=val)
+                alert = self._make_alert(meter_id, key, cfg["severity"], msg)
+                new_alerts.append(alert)
+            else:
+                # Condition cleared — auto-dismiss the active alert for this key
+                existing_id = self._active_keys.get(dedup_key)
+                if existing_id and existing_id in self._alerts:
+                    self._alerts[existing_id]["dismissed"] = True
+                    self._active_keys.pop(dedup_key, None)
+
+        return new_alerts
+
+    def get_alerts(self, meter_id: str, include_dismissed: bool = False) -> List[Dict[str, Any]]:
+        out = [a for a in self._alerts.values() if a["meterId"] == meter_id]
+        if not include_dismissed:
+            out = [a for a in out if not a["dismissed"]]
+        return sorted(out, key=lambda x: x["timestamp"], reverse=True)
+
+    def dismiss(self, alert_id: str) -> bool:
+        if alert_id in self._alerts:
+            self._alerts[alert_id]["dismissed"] = True
+            # Remove from active keys
+            a = self._alerts[alert_id]
+            self._active_keys.pop(f"{a['meterId']}:{a['key']}", None)
+            return True
+        return False
+
+    def acknowledge(self, alert_id: str) -> bool:
+        if alert_id in self._alerts:
+            self._alerts[alert_id]["acknowledged"] = True
+            return True
+        return False
+
+
+alert_store = AlertStore()
+
+# ── Automation Rules store ────────────────────────────────────────────────
+# Rules: if alert_key matches, perform action on load(s)
+DEFAULT_RULES: List[Dict[str, Any]] = [
+    {
+        "id": "rule_peak_shed",
+        "name": "Peak Load Shedding",
+        "description": "Turn off Low-priority loads when usage exceeds 4.5 kW or peak pricing is active.",
+        "enabled": True,
+        "trigger_keys": ["high_usage", "critical_usage", "peak_pricing"],
+        "action": "turn_off",
+        "target_priorities": ["Low"],
+        "target_load_ids": [],   # empty = use priority filter
+        "created_at": utcnow().astimezone(IST).isoformat(),
+    },
+    {
+        "id": "rule_critical_shed",
+        "name": "Emergency Load Shedding",
+        "description": "Turn off Medium and Low priority loads on critical overload.",
+        "enabled": True,
+        "trigger_keys": ["critical_usage"],
+        "action": "turn_off",
+        "target_priorities": ["Low", "Medium"],
+        "target_load_ids": [],
+        "created_at": utcnow().astimezone(IST).isoformat(),
+    },
+    {
+        "id": "rule_offpeak_restore",
+        "name": "Off-Peak Load Restore",
+        "description": "Restore deferred loads during off-peak window.",
+        "enabled": True,
+        "trigger_keys": ["off_peak_window"],
+        "action": "turn_on",
+        "target_priorities": ["Low", "Medium"],
+        "target_load_ids": [],
+        "created_at": utcnow().astimezone(IST).isoformat(),
+    },
+]
+
+_rules_store: Dict[str, Dict[str, Any]] = {r["id"]: dict(r) for r in DEFAULT_RULES}
+
+# Track which loads were auto-shed so we can restore them
+_auto_shed_loads: Set[str] = set()
+
+
+def _apply_automation_rules(meter_id: str, new_alerts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Evaluate active rules against new alerts; return list of actions taken."""
+    actions_taken: List[Dict[str, Any]] = []
+    fired_keys = {a["key"] for a in new_alerts}
+
+    for rule in _rules_store.values():
+        if not rule["enabled"]:
+            continue
+        if not any(k in fired_keys for k in rule["trigger_keys"]):
+            continue
+
+        action = rule["action"]
+        target_ids = rule.get("target_load_ids") or []
+        target_priorities = rule.get("target_priorities") or []
+
+        # Determine which loads to act on
+        loads_to_act = []
+        for load_id, load in _load_state.items():
+            if target_ids and load_id not in target_ids:
+                continue
+            if target_priorities and load["priority"] not in target_priorities:
+                continue
+            loads_to_act.append(load_id)
+
+        for load_id in loads_to_act:
+            load = _load_state[load_id]
+            if action == "turn_off" and load["status"]:
+                load["status"] = False
+                load["auto_controlled"] = True
+                _auto_shed_loads.add(load_id)
+                actions_taken.append({
+                    "rule_id": rule["id"],
+                    "rule_name": rule["name"],
+                    "load_id": load_id,
+                    "load_name": load["name"],
+                    "action": "turned_off",
+                    "reason": rule["description"],
+                    "timestamp": utcnow().astimezone(IST).isoformat(),
+                })
+            elif action == "turn_on" and not load["status"] and load_id in _auto_shed_loads:
+                load["status"] = True
+                load["auto_controlled"] = False
+                _auto_shed_loads.discard(load_id)
+                actions_taken.append({
+                    "rule_id": rule["id"],
+                    "rule_name": rule["name"],
+                    "load_id": load_id,
+                    "load_name": load["name"],
+                    "action": "turned_on",
+                    "reason": rule["description"],
+                    "timestamp": utcnow().astimezone(IST).isoformat(),
+                })
+
+    return actions_taken
+
+
+# ── Alert WebSocket connections ───────────────────────────────────────────
+_alert_connections: Dict[str, Set[WebSocket]] = defaultdict(set)
+
+
+@app.websocket(f"{WS_PREFIX}/consumer/alerts/{{meter_id}}")
+async def alerts_ws(ws: WebSocket, meter_id: str, token: Optional[str] = Query(default=None)):
+    if AUTH_REQUIRED:
+        if not token or not decode_token(token):
+            await ws.close(code=1008)
+            return
+    await ws.accept()
+    _alert_connections[meter_id].add(ws)
+    # Send current active alerts on connect
+    try:
+        await ws.send_json({
+            "type": "snapshot",
+            "alerts": alert_store.get_alerts(meter_id),
+            "loads": [dict(l) for l in _load_state.values()],
+        })
+        while True:
+            _ = await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _alert_connections[meter_id].discard(ws)
+
+
+async def _broadcast_alerts(meter_id: str, new_alerts: List[Dict[str, Any]], actions: List[Dict[str, Any]]) -> None:
+    conns = list(_alert_connections.get(meter_id, set()))
+    if not conns:
+        return
+    msg = {
+        "type": "update",
+        "new_alerts": new_alerts,
+        "actions": actions,
+        "loads": [dict(l) for l in _load_state.values()],
+        "active_alerts": alert_store.get_alerts(meter_id),
+    }
+    tasks = []
+    for ws in conns:
+        try:
+            tasks.append(ws.send_json(msg))
+        except Exception:
+            pass
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+# ── Patch simulator_ingest to also evaluate alerts ────────────────────────
+# We override the existing endpoint by re-registering it after the original.
+# FastAPI uses the last registered route for a given path+method.
+
+@app.post("/simulator/ingest/v2")
+async def simulator_ingest_v2(body: IngestReadingRequest):
+    """Extended ingest that also evaluates alerts and automation rules."""
+    ts = body.timestamp or utcnow()
+    store.ensure_meter(body.meterId)
+
+    rate = tariff_rate(ts)
+    interval_hours = METER_STEP_MINUTES / 60.0
+    energy_kwh = body.usage * interval_hours
+    cost = body.cost if body.cost is not None else energy_kwh * rate
+    voltage = body.voltage
+    current_a = body.current if body.current is not None else (body.usage * 1000.0) / max(1.0, voltage)
+
+    reading = {
+        "timestamp": ts,
+        "usage": float(body.usage),
+        "voltage": float(voltage),
+        "current": float(current_a),
+        "frequency": float(body.frequency),
+        "temperatureOutside": float(body.temperatureOutside if body.temperatureOutside is not None else temp_outside_c(ts)),
+        "renewable": float(solar_kw(ts.hour + ts.minute / 60.0)),
+        "cost": float(cost),
+    }
+
+    store.add_reading(body.meterId, reading)
+
+    # Persist to Google Sheets (non-blocking)
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(_sheets_executor, _append_to_sheet, reading, body.meterId)
+
+    # Evaluate alert thresholds
+    new_alerts = alert_store.evaluate(body.meterId, reading)
+
+    # Run automation rules
+    actions = _apply_automation_rules(body.meterId, new_alerts) if new_alerts else []
+
+    # Broadcast live reading to energy WS subscribers
+    conns = list(store._connections.get(body.meterId, set()))
+    if conns:
+        msg = {
+            "meterId": body.meterId,
+            "timestamp": ts.astimezone(IST).strftime("%H:%M:%S"),
+            "usage": reading["usage"],
+            "voltage": reading["voltage"],
+            "current": reading["current"],
+            "frequency": reading["frequency"],
+            "cost": reading["cost"],
+        }
+        send_tasks = [ws.send_json(msg) for ws in conns]
+        await asyncio.gather(*send_tasks, return_exceptions=True)
+
+    # Broadcast alerts + actions to alert WS subscribers
+    if new_alerts or actions:
+        await _broadcast_alerts(body.meterId, new_alerts, actions)
+
+    return {"ok": True, "stored": 1, "alerts_fired": len(new_alerts), "actions_taken": len(actions)}
+
+
+# ── REST endpoints for alerts & loads ────────────────────────────────────
+
+@app.get(f"{APP_PREFIX}/consumer/alerts")
+def get_alerts(meterId: str = Query(...), include_dismissed: bool = Query(default=False)):
+    return {"alerts": alert_store.get_alerts(meterId, include_dismissed)}
+
+
+@app.post(f"{APP_PREFIX}/consumer/alerts/{{alert_id}}/dismiss")
+def dismiss_alert(alert_id: str):
+    ok = alert_store.dismiss(alert_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {"ok": True}
+
+
+@app.post(f"{APP_PREFIX}/consumer/alerts/{{alert_id}}/acknowledge")
+def acknowledge_alert(alert_id: str):
+    ok = alert_store.acknowledge(alert_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {"ok": True}
+
+
+@app.get(f"{APP_PREFIX}/consumer/loads")
+def get_loads(meterId: str = Query(...)):
+    loads = [dict(l) for l in _load_state.values()]
+    # Compute active power (only ON loads contribute)
+    total_kw = sum(l["rated_kw"] for l in loads if l["status"])
+    return {"loads": loads, "total_active_kw": round(total_kw, 3)}
+
+
+class LoadControlRequest(BaseModel):
+    status: bool
+    manual: bool = True  # True = manual override, False = auto
+
+
+@app.post(f"{APP_PREFIX}/consumer/loads/{{load_id}}/control")
+async def control_load(load_id: str, body: LoadControlRequest, meterId: str = Query(...)):
+    if load_id not in _load_state:
+        raise HTTPException(status_code=404, detail="Load not found")
+    _load_state[load_id]["status"] = body.status
+    if body.manual:
+        _load_state[load_id]["auto_controlled"] = False
+        _auto_shed_loads.discard(load_id)
+    # Broadcast updated load state
+    await _broadcast_alerts(meterId, [], [])
+    return {"ok": True, "load": _load_state[load_id]}
+
+
+# ── Automation Rules REST ─────────────────────────────────────────────────
+
+class AutomationRuleRequest(BaseModel):
+    name: str
+    description: str = ""
+    enabled: bool = True
+    trigger_keys: List[str]
+    action: str  # "turn_off" | "turn_on"
+    target_priorities: List[str] = []
+    target_load_ids: List[str] = []
+
+
+@app.get(f"{APP_PREFIX}/consumer/automation/rules")
+def get_automation_rules(meterId: str = Query(...)):
+    return {"rules": list(_rules_store.values())}
+
+
+@app.post(f"{APP_PREFIX}/consumer/automation/rules")
+def create_automation_rule(body: AutomationRuleRequest, meterId: str = Query(...)):
+    rule_id = f"rule_{uuid.uuid4().hex[:8]}"
+    rule = {
+        "id": rule_id,
+        "name": body.name,
+        "description": body.description,
+        "enabled": body.enabled,
+        "trigger_keys": body.trigger_keys,
+        "action": body.action,
+        "target_priorities": body.target_priorities,
+        "target_load_ids": body.target_load_ids,
+        "created_at": utcnow().astimezone(IST).isoformat(),
+    }
+    _rules_store[rule_id] = rule
+    return {"ok": True, "rule": rule}
+
+
+@app.patch(f"{APP_PREFIX}/consumer/automation/rules/{{rule_id}}")
+def update_automation_rule(rule_id: str, body: dict, meterId: str = Query(...)):
+    if rule_id not in _rules_store:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    _rules_store[rule_id].update(body)
+    return {"ok": True, "rule": _rules_store[rule_id]}
+
+
+@app.delete(f"{APP_PREFIX}/consumer/automation/rules/{{rule_id}}")
+def delete_automation_rule(rule_id: str, meterId: str = Query(...)):
+    if rule_id not in _rules_store:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    del _rules_store[rule_id]
+    return {"ok": True}
+
+
+# ── Periodic alert injection for demo (simulates threshold crossings) ─────
+# The simulator_run.py posts to /simulator/ingest (original).
+# We also add a background task that periodically injects a spike reading
+# to demonstrate alert triggering without needing real hardware.
+
+_demo_spike_counter = 0
+
+@app.on_event("startup")
+async def start_demo_alert_loop():
+    asyncio.create_task(_demo_alert_loop())
+
+
+async def _demo_alert_loop():
+    """Every 30s inject a synthetic spike reading to trigger alerts for demo."""
+    global _demo_spike_counter
+    await asyncio.sleep(15)  # initial delay
+    while True:
+        await asyncio.sleep(30)
+        _demo_spike_counter += 1
+        # Cycle through different alert scenarios
+        scenario = _demo_spike_counter % 6
+        for meter_id in list(store._data.keys()):
+            latest = store.latest(meter_id)
+            if not latest:
+                continue
+            if scenario == 0:
+                # High usage spike
+                spike = dict(latest)
+                spike["usage"] = 5.2
+                spike["timestamp"] = utcnow()
+                new_alerts = alert_store.evaluate(meter_id, spike)
+                actions = _apply_automation_rules(meter_id, new_alerts)
+                if new_alerts or actions:
+                    await _broadcast_alerts(meter_id, new_alerts, actions)
+            elif scenario == 1:
+                # Critical overload
+                spike = dict(latest)
+                spike["usage"] = 6.5
+                spike["timestamp"] = utcnow()
+                new_alerts = alert_store.evaluate(meter_id, spike)
+                actions = _apply_automation_rules(meter_id, new_alerts)
+                if new_alerts or actions:
+                    await _broadcast_alerts(meter_id, new_alerts, actions)
+            elif scenario == 2:
+                # Low voltage
+                spike = dict(latest)
+                spike["voltage"] = 205.0
+                spike["timestamp"] = utcnow()
+                new_alerts = alert_store.evaluate(meter_id, spike)
+                actions = _apply_automation_rules(meter_id, new_alerts)
+                if new_alerts or actions:
+                    await _broadcast_alerts(meter_id, new_alerts, actions)
+            elif scenario == 3:
+                # Frequency anomaly
+                spike = dict(latest)
+                spike["frequency"] = 49.3
+                spike["timestamp"] = utcnow()
+                new_alerts = alert_store.evaluate(meter_id, spike)
+                actions = _apply_automation_rules(meter_id, new_alerts)
+                if new_alerts or actions:
+                    await _broadcast_alerts(meter_id, new_alerts, actions)
+            elif scenario == 4:
+                # Back to normal — clears alerts
+                spike = dict(latest)
+                spike["usage"] = 2.0
+                spike["voltage"] = 230.0
+                spike["frequency"] = 50.0
+                spike["timestamp"] = utcnow()
+                new_alerts = alert_store.evaluate(meter_id, spike)
+                actions = _apply_automation_rules(meter_id, new_alerts)
+                await _broadcast_alerts(meter_id, new_alerts, actions)
+            # scenario 5 = off-peak pricing check (uses real time, no spike needed)
