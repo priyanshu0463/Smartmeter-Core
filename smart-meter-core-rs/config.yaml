@@ -1,0 +1,21 @@
+server:
+  host: "0.0.0.0"
+  port: 8001
+
+jwt:
+  secret: "dev-secret"
+  algorithm: "HS256"
+
+meter:
+  retention_days: 30
+  step_minutes: 0.05
+  max_points_per_meter: 100000
+
+ingestion:
+  broadcast_buffer_size: 1000
+
+cors:
+  allow_origins:
+    - "http://localhost:3000"
+    - "http://127.0.0.1:3000"
+  allow_credentials: true
